@@ -1,0 +1,659 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Roblox Ideas Board</title>
+  <meta charset="UTF-8">
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #dfe6ee;
+      overflow: hidden;
+    }
+
+    #topbar {
+      background: #333;
+      color: white;
+      padding: 10px;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    #topbar button,
+    #topbar select {
+      padding: 8px 12px;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: bold;
+    }
+
+    #lineBtn.active {
+      background: #ffd54a;
+    }
+
+    #board {
+      width: 100vw;
+      height: calc(100vh - 56px);
+      position: relative;
+      overflow: hidden;
+      background-image:
+        linear-gradient(to right, rgba(0,0,0,0.06) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(0,0,0,0.06) 1px, transparent 1px);
+      background-size: 24px 24px;
+    }
+
+    #lineLayer {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
+
+    .note {
+      position: absolute;
+      width: 240px;
+      min-height: 170px;
+      border: 2px solid #333;
+      border-radius: 12px;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.15);
+      overflow: hidden;
+    }
+
+    .note.selected {
+      outline: 3px solid #4d90fe;
+    }
+
+    .note-header {
+      height: 34px;
+      background: rgba(0,0,0,0.12);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 8px;
+      cursor: grab;
+      user-select: none;
+      font-weight: bold;
+    }
+
+    .note-right {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .note-color {
+      width: 22px;
+      height: 22px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      padding: 0;
+    }
+
+    .note-delete {
+      border: none;
+      background: #ff6b6b;
+      color: white;
+      border-radius: 6px;
+      width: 24px;
+      height: 24px;
+      cursor: pointer;
+      font-weight: bold;
+    }
+
+    .note-body {
+      width: 100%;
+      height: 84px;
+      border: none;
+      resize: none;
+      outline: none;
+      background: transparent;
+      padding: 10px;
+      box-sizing: border-box;
+      font-size: 15px;
+    }
+
+    .note-bottom {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 0 10px 10px 10px;
+      box-sizing: border-box;
+    }
+
+    .note-category {
+      flex: 1;
+      padding: 8px;
+      border-radius: 8px;
+      border: none;
+      font-weight: bold;
+    }
+
+    .note-tag {
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: rgba(0,0,0,0.1);
+      font-size: 12px;
+      font-weight: bold;
+      white-space: nowrap;
+    }
+
+    .line-hitbox {
+      pointer-events: auto;
+      cursor: pointer;
+    }
+
+    .line-visible {
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="topbar">
+    <button id="addBtn">Add Note</button>
+    <button id="lineBtn">Line Mode: OFF</button>
+    <button id="saveBtn">Save</button>
+    <button id="clearBtn">Clear All</button>
+
+    <select id="filterSelect">
+      <option value="All">All</option>
+      <option value="Obby">Obby</option>
+      <option value="Simulator">Simulator</option>
+      <option value="Tycoon">Tycoon</option>
+      <option value="Story">Story</option>
+      <option value="Race">Race</option>
+      <option value="Other">Other</option>
+    </select>
+  </div>
+
+  <div id="board">
+    <svg id="lineLayer"></svg>
+  </div>
+
+  <script>
+    const board = document.getElementById("board");
+    const lineLayer = document.getElementById("lineLayer");
+    const addBtn = document.getElementById("addBtn");
+    const lineBtn = document.getElementById("lineBtn");
+    const saveBtn = document.getElementById("saveBtn");
+    const clearBtn = document.getElementById("clearBtn");
+    const filterSelect = document.getElementById("filterSelect");
+
+    const NOTE_WIDTH = 240;
+    const NOTE_HEIGHT = 170;
+    const STORAGE_KEY = "roblox_ideas_board_fixed_v1";
+
+    const COLORS = [
+      "#fff2a8",
+      "#ffd6d6",
+      "#d6ecff",
+      "#d9ffd6",
+      "#f3d6ff",
+      "#ffe7bf"
+    ];
+
+    const CATEGORIES = ["Obby", "Simulator", "Tycoon", "Story", "Race", "Other"];
+
+    let notes = [];
+    let lines = [];
+    let nextNoteId = 1;
+    let nextLineId = 1;
+    let highestZ = 1;
+
+    let dragging = null;
+    let dragOffsetX = 0;
+    let dragOffsetY = 0;
+
+    let lineMode = false;
+    let lineStartNoteId = null;
+    let currentFilter = "All";
+
+    function setLineMode(on) {
+      lineMode = on;
+      lineBtn.textContent = "Line Mode: " + (on ? "ON" : "OFF");
+      lineBtn.classList.toggle("active", on);
+
+      if (!on) {
+        lineStartNoteId = null;
+        clearSelectedNotes();
+      }
+    }
+
+    function clearSelectedNotes() {
+      document.querySelectorAll(".note").forEach(noteEl => {
+        noteEl.classList.remove("selected");
+      });
+    }
+
+    function bringToFront(note, noteEl) {
+      note.z = highestZ++;
+      noteEl.style.zIndex = note.z;
+    }
+
+    function cycleColor(note, noteEl, colorBtn) {
+      const currentIndex = COLORS.indexOf(note.color);
+      const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % COLORS.length;
+      note.color = COLORS[nextIndex];
+      noteEl.style.background = note.color;
+      colorBtn.style.background = note.color;
+    }
+
+    function applyFilter() {
+      for (const note of notes) {
+        const noteEl = document.querySelector(`.note[data-id="${note.id}"]`);
+        if (!noteEl) continue;
+
+        const show = currentFilter === "All" || note.category === currentFilter;
+        noteEl.style.display = show ? "block" : "none";
+      }
+
+      renderLines();
+    }
+
+    function createNote(
+      x = 100,
+      y = 100,
+      text = "New Idea",
+      color = COLORS[0],
+      id = null,
+      z = null,
+      category = "Other"
+    ) {
+      const noteId = id ?? nextNoteId++;
+      const noteZ = z ?? highestZ++;
+
+      const note = {
+        id: noteId,
+        x,
+        y,
+        text,
+        color,
+        z: noteZ,
+        category
+      };
+
+      notes.push(note);
+
+      const noteEl = document.createElement("div");
+      noteEl.className = "note";
+      noteEl.dataset.id = note.id;
+      noteEl.style.left = note.x + "px";
+      noteEl.style.top = note.y + "px";
+      noteEl.style.zIndex = note.z;
+      noteEl.style.background = note.color;
+
+      const header = document.createElement("div");
+      header.className = "note-header";
+
+      const title = document.createElement("div");
+      title.textContent = "Idea " + note.id;
+
+      const rightSide = document.createElement("div");
+      rightSide.className = "note-right";
+
+      const colorBtn = document.createElement("button");
+      colorBtn.className = "note-color";
+      colorBtn.style.background = note.color;
+      colorBtn.title = "Change color";
+
+      const delBtn = document.createElement("button");
+      delBtn.className = "note-delete";
+      delBtn.textContent = "×";
+      delBtn.title = "Delete note";
+
+      const body = document.createElement("textarea");
+      body.className = "note-body";
+      body.value = note.text;
+
+      const bottom = document.createElement("div");
+      bottom.className = "note-bottom";
+
+      const categorySelect = document.createElement("select");
+      categorySelect.className = "note-category";
+
+      for (const cat of CATEGORIES) {
+        const option = document.createElement("option");
+        option.value = cat;
+        option.textContent = cat;
+        if (cat === note.category) option.selected = true;
+        categorySelect.appendChild(option);
+      }
+
+      const tag = document.createElement("div");
+      tag.className = "note-tag";
+      tag.textContent = note.category;
+
+      rightSide.appendChild(colorBtn);
+      rightSide.appendChild(delBtn);
+      header.appendChild(title);
+      header.appendChild(rightSide);
+      bottom.appendChild(categorySelect);
+      bottom.appendChild(tag);
+      noteEl.appendChild(header);
+      noteEl.appendChild(body);
+      noteEl.appendChild(bottom);
+      board.appendChild(noteEl);
+
+      header.addEventListener("mousedown", function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+
+        bringToFront(note, noteEl);
+
+        if (lineMode) {
+          handleLineClick(note.id, noteEl);
+          return;
+        }
+
+        dragging = note;
+        const rect = noteEl.getBoundingClientRect();
+        const boardRect = board.getBoundingClientRect();
+
+        dragOffsetX = e.clientX - rect.left;
+        dragOffsetY = e.clientY - rect.top;
+
+        note.x = rect.left - boardRect.left;
+        note.y = rect.top - boardRect.top;
+      });
+
+      body.addEventListener("mousedown", function(e) {
+        bringToFront(note, noteEl);
+        e.stopPropagation();
+      });
+
+      colorBtn.addEventListener("click", function(e) {
+        e.stopPropagation();
+        cycleColor(note, noteEl, colorBtn);
+      });
+
+      delBtn.addEventListener("click", function(e) {
+        e.stopPropagation();
+        deleteNote(note.id);
+      });
+
+      body.addEventListener("input", function() {
+        note.text = body.value;
+      });
+
+      categorySelect.addEventListener("change", function() {
+        note.category = categorySelect.value;
+        tag.textContent = note.category;
+        applyFilter();
+      });
+
+      applyFilter();
+      return note;
+    }
+
+    function handleLineClick(noteId, noteEl) {
+      clearSelectedNotes();
+
+      if (lineStartNoteId === null) {
+        lineStartNoteId = noteId;
+        noteEl.classList.add("selected");
+      } else {
+        if (lineStartNoteId !== noteId) {
+          createLine(lineStartNoteId, noteId);
+        }
+        lineStartNoteId = null;
+        clearSelectedNotes();
+      }
+    }
+
+    function createArrowMarker() {
+      const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+
+      const marker = document.createElementNS("http://www.w3.org/2000/svg", "marker");
+      marker.setAttribute("id", "arrowhead");
+      marker.setAttribute("markerWidth", "10");
+      marker.setAttribute("markerHeight", "7");
+      marker.setAttribute("refX", "9");
+      marker.setAttribute("refY", "3.5");
+      marker.setAttribute("orient", "auto");
+      marker.setAttribute("markerUnits", "strokeWidth");
+
+      const polygon = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+      polygon.setAttribute("points", "0 0, 10 3.5, 0 7");
+      polygon.setAttribute("fill", "#222");
+
+      marker.appendChild(polygon);
+      defs.appendChild(marker);
+      lineLayer.appendChild(defs);
+    }
+
+    function createLine(fromId, toId) {
+      const alreadyExists = lines.some(line =>
+        (line.from === fromId && line.to === toId) ||
+        (line.from === toId && line.to === fromId)
+      );
+
+      if (alreadyExists) return;
+
+      lines.push({
+        id: nextLineId++,
+        from: fromId,
+        to: toId
+      });
+
+      renderLines();
+    }
+
+    function deleteLine(lineId) {
+      lines = lines.filter(line => line.id !== lineId);
+      renderLines();
+    }
+
+    function deleteNote(noteId) {
+      notes = notes.filter(note => note.id !== noteId);
+      lines = lines.filter(line => line.from !== noteId && line.to !== noteId);
+
+      const noteEl = document.querySelector(`.note[data-id="${noteId}"]`);
+      if (noteEl) noteEl.remove();
+
+      if (lineStartNoteId === noteId) {
+        lineStartNoteId = null;
+      }
+
+      renderLines();
+    }
+
+    function renderLines() {
+      lineLayer.innerHTML = "";
+      createArrowMarker();
+
+      for (const line of lines) {
+        const a = notes.find(n => n.id === line.from);
+        const b = notes.find(n => n.id === line.to);
+        if (!a || !b) continue;
+
+        if (currentFilter !== "All") {
+          if (a.category !== currentFilter || b.category !== currentFilter) {
+            continue;
+          }
+        }
+
+        const aCenterX = a.x + NOTE_WIDTH / 2;
+        const aCenterY = a.y + NOTE_HEIGHT / 2;
+        const bCenterX = b.x + NOTE_WIDTH / 2;
+        const bCenterY = b.y + NOTE_HEIGHT / 2;
+
+        const visible = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        visible.setAttribute("x1", aCenterX);
+        visible.setAttribute("y1", aCenterY);
+        visible.setAttribute("x2", bCenterX);
+        visible.setAttribute("y2", bCenterY);
+        visible.setAttribute("stroke", "#222");
+        visible.setAttribute("stroke-width", "3");
+        visible.setAttribute("marker-end", "url(#arrowhead)");
+        visible.setAttribute("class", "line-visible");
+
+        const hitbox = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        hitbox.setAttribute("x1", aCenterX);
+        hitbox.setAttribute("y1", aCenterY);
+        hitbox.setAttribute("x2", bCenterX);
+        hitbox.setAttribute("y2", bCenterY);
+        hitbox.setAttribute("stroke", "transparent");
+        hitbox.setAttribute("stroke-width", "16");
+        hitbox.setAttribute("class", "line-hitbox");
+
+        hitbox.addEventListener("click", function(e) {
+          e.stopPropagation();
+          deleteLine(line.id);
+        });
+
+        lineLayer.appendChild(visible);
+        lineLayer.appendChild(hitbox);
+      }
+    }
+
+    function saveBoard() {
+      const data = {
+        notes,
+        lines,
+        nextNoteId,
+        nextLineId,
+        highestZ,
+        currentFilter
+      };
+
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+      saveBtn.textContent = "Saved!";
+      setTimeout(() => {
+        saveBtn.textContent = "Save";
+      }, 700);
+    }
+
+    function loadBoard() {
+      const raw = localStorage.getItem(STORAGE_KEY);
+
+      if (!raw) {
+        createNote(80, 80, "Push a ball game", COLORS[0], null, null, "Obby");
+        createNote(380, 140, "Add coins", COLORS[2], null, null, "Simulator");
+        createNote(240, 300, "Funny obby idea", COLORS[3], null, null, "Obby");
+        renderLines();
+        return;
+      }
+
+      const data = JSON.parse(raw);
+
+      notes = [];
+      lines = Array.isArray(data.lines) ? data.lines : [];
+      nextNoteId = data.nextNoteId || 1;
+      nextLineId = data.nextLineId || 1;
+      highestZ = data.highestZ || 1;
+      currentFilter = data.currentFilter || "All";
+      filterSelect.value = currentFilter;
+
+      board.querySelectorAll(".note").forEach(n => n.remove());
+
+      if (Array.isArray(data.notes)) {
+        for (const savedNote of data.notes) {
+          createNote(
+            savedNote.x,
+            savedNote.y,
+            savedNote.text,
+            savedNote.color || COLORS[0],
+            savedNote.id,
+            savedNote.z || 1,
+            savedNote.category || "Other"
+          );
+        }
+      }
+
+      applyFilter();
+      renderLines();
+    }
+
+    document.addEventListener("mousemove", function(e) {
+      if (!dragging) return;
+
+      const boardRect = board.getBoundingClientRect();
+
+      let newX = e.clientX - boardRect.left - dragOffsetX;
+      let newY = e.clientY - boardRect.top - dragOffsetY;
+
+      newX = Math.max(0, Math.min(board.clientWidth - NOTE_WIDTH, newX));
+      newY = Math.max(0, Math.min(board.clientHeight - NOTE_HEIGHT, newY));
+
+      dragging.x = newX;
+      dragging.y = newY;
+
+      const noteEl = document.querySelector(`.note[data-id="${dragging.id}"]`);
+      if (noteEl) {
+        noteEl.style.left = newX + "px";
+        noteEl.style.top = newY + "px";
+      }
+
+      renderLines();
+    });
+
+    document.addEventListener("mouseup", function() {
+      dragging = null;
+    });
+
+    addBtn.addEventListener("click", function() {
+      createNote(
+        100 + Math.random() * 180,
+        100 + Math.random() * 120,
+        "New Idea",
+        COLORS[Math.floor(Math.random() * COLORS.length)],
+        null,
+        null,
+        "Other"
+      );
+    });
+
+    lineBtn.addEventListener("click", function() {
+      setLineMode(!lineMode);
+    });
+
+    saveBtn.addEventListener("click", function() {
+      saveBoard();
+    });
+
+    clearBtn.addEventListener("click", function() {
+      notes = [];
+      lines = [];
+      nextNoteId = 1;
+      nextLineId = 1;
+      highestZ = 1;
+      lineStartNoteId = null;
+
+      board.querySelectorAll(".note").forEach(n => n.remove());
+      renderLines();
+      clearSelectedNotes();
+      localStorage.removeItem(STORAGE_KEY);
+    });
+
+    filterSelect.addEventListener("change", function() {
+      currentFilter = filterSelect.value;
+      applyFilter();
+    });
+
+    board.addEventListener("dblclick", function(e) {
+      if (e.target !== board && e.target !== lineLayer) return;
+
+      const rect = board.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+
+      createNote(
+        Math.max(0, Math.min(board.clientWidth - NOTE_WIDTH, x - NOTE_WIDTH / 2)),
+        Math.max(0, Math.min(board.clientHeight - NOTE_HEIGHT, y - NOTE_HEIGHT / 2)),
+        "New Idea",
+        COLORS[Math.floor(Math.random() * COLORS.length)],
+        null,
+        null,
+        "Other"
+      );
+    });
+
+    loadBoard();
+  </script>
+</body>
+</html>
